@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable --no-self-update
+
+      - name: Check that the tag matches the versions in the sources
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:TAG.TrimStart('v')
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $iss = (Select-String -Path dist/turbo-delete.iss -Pattern '^#define MyAppVersion "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($version -ne $cargo -or $version -ne $iss) {
+            throw "Tag $env:TAG does not match Cargo.toml ($cargo) and dist/turbo-delete.iss ($iss)"
+          }
+
+      - run: cargo test --locked
+
+      # Inno Setup 6 is on the windows-latest image; install it if that changes.
+      - name: Ensure Inno Setup is installed
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
+          }
+
+      # Builds bin/td.exe and bin/turbo-delete-setup.exe.
+      - run: python automate-release.py
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            bin/td.exe
+            bin/turbo-delete-setup.exe
+          fail_on_unmatched_files: true
