@@ -24,6 +24,18 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+      # Makes a ready-to-use td.exe downloadable from every run's summary page.
+      - name: Build release td.exe
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked
+      - name: Upload td.exe
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: td-windows-x64
+          path: target/release/td.exe
+          if-no-files-found: error
+
   msrv:
     name: Minimum Rust version
     runs-on: ubuntu-latest
