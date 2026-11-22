@@ -9,8 +9,6 @@
 ; current user only (no administrator rights), adds the install folder to the
 ; user's PATH, and adds "Turbo Delete" to the folder context menu in Explorer.
 
-#include "environment.iss"
-
 #define MyAppName "Turbo Delete"
 ; Keep in sync with `version` in Cargo.toml (the release workflow checks it).
 #define MyAppVersion "1.0.0"
@@ -56,6 +54,10 @@ Source: "bin\td.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; folder as %1; --yes because choosing the menu entry is the confirmation.
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\turbo-delete"; ValueType: string; ValueName: ""; ValueData: "Turbo Delete"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\turbo-delete\command"; ValueType: string; ValueName: ""; ValueData: """{app}\td.exe"" --yes ""%1"""
+
+; environment.iss is a [Code] section, so it must be included here: anything
+; that follows it is compiled as Pascal Script.
+#include "environment.iss"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
