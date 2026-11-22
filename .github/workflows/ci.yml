@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +35,29 @@ jobs:
           name: td-windows-x64
           path: target/release/td.exe
           if-no-files-found: error
+
+  freebsd:
+    name: Test (FreeBSD)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # pkg's Rust ignores rust-toolchain.toml; that is fine for running tests.
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: pkg install -y rust
+          run: cargo test --locked
+
+  linux-musl:
+    name: Build (Linux musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable --no-self-update
+      - run: rustup target add x86_64-unknown-linux-musl
+      - run: sudo apt-get install -y musl-tools
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --target x86_64-unknown-linux-musl
 
   msrv:
     name: Minimum Rust version

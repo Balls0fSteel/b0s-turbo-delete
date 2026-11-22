@@ -7,30 +7,41 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check that the tag matches the versions in the sources
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          iss_version=$(sed -n 's/^#define MyAppVersion "\(.*\)"/\1/p' dist/turbo-delete.iss | head -n1)
+          if [ "$REF_TYPE" = tag ]; then TAG="$REF_NAME"; else TAG="v$cargo_version"; fi
+          version="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -z "$cargo_version" ] || [ "$version" != "$cargo_version" ] || [ "$version" != "$iss_version" ]; then
+            echo "::error::Tag $TAG does not match Cargo.toml ($cargo_version) and dist/turbo-delete.iss ($iss_version)"
+            exit 1
+          fi
+
+  windows:
+    name: Windows
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
       - run: rustup update stable --no-self-update
-
-      - name: Check that the tag matches the versions in the sources
-        id: version
-        shell: pwsh
-        env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-        run: |
-          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
-          $iss = (Select-String -Path dist/turbo-delete.iss -Pattern '^#define MyAppVersion "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
-          if (-not $env:TAG) { $env:TAG = "v$cargo" }
-          $version = $env:TAG.TrimStart('v')
-          "tag=$env:TAG" >> $env:GITHUB_OUTPUT
-          if ($version -ne $cargo -or $version -ne $iss) {
-            throw "Tag $env:TAG does not match Cargo.toml ($cargo) and dist/turbo-delete.iss ($iss)"
-          }
-
       - run: cargo test --locked
 
       # Inno Setup 6 is on the windows-latest image; install it if that changes.
@@ -45,12 +56,122 @@ jobs:
       # Builds bin/td.exe and bin/turbo-delete-setup.exe.
       - run: python automate-release.py
 
-      - uses: softprops/action-gh-release@v3
+      - uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          files: |
+          name: release-windows
+          path: |
             bin/td.exe
             bin/turbo-delete-setup.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux (${{ matrix.target }})
+    needs: version
+    # Each target builds natively, on an x86_64 or an arm64 runner.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable --no-self-update
+      - run: rustup target add ${{ matrix.target }}
+      - run: sudo apt-get install -y musl-tools
+      - run: cargo test --locked --target ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir dist-out
+          cp "target/$TARGET/release/td" LICENSE.txt README.md dist-out/
+          tar -C dist-out -czf "td-$VERSION-$TARGET.tar.gz" td LICENSE.txt README.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: td-*.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable --no-self-update
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: cargo test --locked
+      - run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir dist-out
+          lipo -create -output dist-out/td \
+            target/aarch64-apple-darwin/release/td \
+            target/x86_64-apple-darwin/release/td
+          cp LICENSE.txt README.md dist-out/
+          tar -C dist-out -czf "td-$VERSION-macos-universal.tar.gz" td LICENSE.txt README.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: td-*.tar.gz
+          if-no-files-found: error
+
+  freebsd:
+    name: FreeBSD
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: vmactions/freebsd-vm@v1
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        with:
+          usesh: true
+          envs: VERSION
+          prepare: pkg install -y rust
+          run: |
+            cargo build --release --locked
+            mkdir dist-out
+            cp target/release/td LICENSE.txt README.md dist-out/
+            tar -C dist-out -czf "td-$VERSION-x86_64-unknown-freebsd.tar.gz" td LICENSE.txt README.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-freebsd
+          path: td-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [version, windows, linux, macos, freebsd]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        working-directory: release
+        run: |
+          ls -l
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: release/*
           fail_on_unmatched_files: true
