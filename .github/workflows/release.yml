@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Manual run: releases the version in Cargo.toml and creates its v* tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,13 +17,16 @@ jobs:
       - run: rustup update stable --no-self-update
 
       - name: Check that the tag matches the versions in the sources
+        id: version
         shell: pwsh
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          $version = $env:TAG.TrimStart('v')
           $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
           $iss = (Select-String -Path dist/turbo-delete.iss -Pattern '^#define MyAppVersion "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if (-not $env:TAG) { $env:TAG = "v$cargo" }
+          $version = $env:TAG.TrimStart('v')
+          "tag=$env:TAG" >> $env:GITHUB_OUTPUT
           if ($version -ne $cargo -or $version -ne $iss) {
             throw "Tag $env:TAG does not match Cargo.toml ($cargo) and dist/turbo-delete.iss ($iss)"
           }
@@ -42,6 +47,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
           files: |
             bin/td.exe
             bin/turbo-delete-setup.exe
