@@ -1,27 +1,38 @@
+"""Build td.exe and the Windows installer.
+
+Run from the repository root on Windows. Requires Rust (cargo) and Inno Setup 6
+(iscc.exe on PATH, or installed in its default location).
+
+Produces bin\\td.exe and bin\\turbo-delete-setup.exe.
+"""
+
 import shutil
-import os
+import subprocess
+from pathlib import Path
 
-# Pre-requisites: iscc.exe (Inno Setup), pyinstaller.exe (PyInstaller)
+ROOT = Path(__file__).resolve().parent
+DEFAULT_ISCC = Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe")
 
-# Compile turbo-delete.exe
-os.system('cargo build --profile release-optimized')
 
-# Complile register-context-menu.py
-os.system(r'pyinstaller --onefile dist\register-context-menu.py')
+def find_iscc():
+    found = shutil.which("iscc")
+    if found:
+        return found
+    if DEFAULT_ISCC.exists():
+        return str(DEFAULT_ISCC)
+    raise SystemExit("iscc.exe (Inno Setup 6) not found")
 
-# Complile unregister-context-menu.py
-os.system(r'pyinstaller --onefile dist\unregister-context-menu.py')
 
-shutil.move(r'dist\register-context-menu.exe', r'bin\register-context-menu.exe')
-shutil.move(r'dist\unregister-context-menu.exe', r'bin\unregister-context-menu.exe')
+def main():
+    subprocess.run(["cargo", "build", "--release"], cwd=ROOT, check=True)
 
-# Copy turbo-delete.exe from the target/release-optimized folder
-shutil.copyfile(r'target\release-optimized\turbo-delete.exe', r'bin\td.exe')
+    bin_dir = ROOT / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    shutil.copyfile(ROOT / "target" / "release" / "td.exe", bin_dir / "td.exe")
 
-os.system(r'iscc.exe dist\turbo-delete.iss')
+    subprocess.run([find_iscc(), str(ROOT / "dist" / "turbo-delete.iss")], cwd=ROOT, check=True)
+    print(f"Built {bin_dir / 'turbo-delete-setup.exe'}")
 
-# Cleanup
-os.remove('register-context-menu.spec')
-os.remove('unregister-context-menu.spec')
-shutil.rmtree(r'build')
-shutil.rmtree(r'dist\__pycache__')
+
+if __name__ == "__main__":
+    main()

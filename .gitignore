@@ -1,4 +1,8 @@
 /target
+/bin/
+__pycache__/
+
+# Scratch trees for trying the tool out
 /node_modules
 package.json
 .pnpm-debug.log
