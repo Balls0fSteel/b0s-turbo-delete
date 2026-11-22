@@ -108,6 +108,71 @@ fn deletes_deep_nesting() {
     assert!(!root.exists());
 }
 
+/// Paths deeper than PATH_MAX (4096 bytes on Linux, 1024 on macOS) cannot be
+/// passed to the kernel at all; td must work relative to directory handles.
+#[cfg(unix)]
+#[test]
+fn deletes_paths_longer_than_path_max() {
+    use rustix::fs::{CWD, Mode, OFlags, mkdirat, openat};
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("long");
+    fs::create_dir(&root).unwrap();
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY;
+    let mut dir = openat(CWD, &root, flags, Mode::empty()).unwrap();
+    // 1200 levels of "/dddd" is 6000 bytes.
+    for _ in 0..1200 {
+        mkdirat(&dir, "dddd", Mode::from_raw_mode(0o755)).unwrap();
+        dir = openat(&dir, "dddd", flags, Mode::empty()).unwrap();
+    }
+    let file = OFlags::WRONLY | OFlags::CREATE;
+    drop(openat(&dir, "leaf.txt", file, Mode::from_raw_mode(0o644)).unwrap());
+    drop(dir);
+
+    let output = delete_yes(&root);
+    assert_success(&output);
+    assert!(!root.exists());
+    assert!(
+        stdout(&output).starts_with("Deleted 1 files, 1201 folders in "),
+        "stdout: {}",
+        stdout(&output)
+    );
+}
+
+/// Each directory being deleted holds a file descriptor; a tree deeper than
+/// the descriptor limit must still be deleted completely.
+#[cfg(unix)]
+#[test]
+fn deletes_trees_deeper_than_the_file_descriptor_limit() {
+    use std::os::unix::process::CommandExt;
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("deep");
+    // Deeper than the limit set below, but shorter than macOS's PATH_MAX.
+    write(&nest(&root, 400).join("leaf.txt"), "leaf");
+
+    let cwd = TempDir::new().unwrap();
+    let mut command = td(cwd.path());
+    command.arg("--yes").arg(&root);
+    // SAFETY: setrlimit is async-signal-safe and allocates nothing.
+    unsafe {
+        command.pre_exec(|| {
+            use rustix::process::{Resource, Rlimit, setrlimit};
+            let limit = Rlimit {
+                current: Some(256),
+                maximum: Some(256),
+            };
+            setrlimit(Resource::Nofile, limit).map_err(std::io::Error::from)
+        });
+    }
+    let output = command.output().unwrap();
+    assert_success(&output);
+    assert!(!root.exists());
+    assert!(
+        stdout(&output).starts_with("Deleted 1 files, 401 folders in "),
+        "stdout: {}",
+        stdout(&output)
+    );
+}
+
 #[test]
 fn deletes_read_only_files_and_folders() {
     let tmp = TempDir::new().unwrap();

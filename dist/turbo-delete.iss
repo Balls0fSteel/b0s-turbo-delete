@@ -11,7 +11,7 @@
 
 #define MyAppName "Turbo Delete"
 ; Keep in sync with `version` in Cargo.toml (the release workflow checks it).
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "XtremeDevX"
 #define MyAppURL "https://github.com/Balls0fSteel/b0s-turbo-delete"
 

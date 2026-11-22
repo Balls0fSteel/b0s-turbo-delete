@@ -21,6 +21,11 @@
 //! directory is removed only after all of its children are gone. Each entry
 //! is touched by exactly one thread, so nothing races.
 //!
+//! On Unix the work is done relative to open directory handles (`openat`,
+//! `unlinkat`; see `unix.rs`), so the kernel never re-resolves the path from
+//! the root and a directory swapped for a link mid-delete is not followed.
+//! Elsewhere (Windows) entries are named by full path.
+//!
 //! Links are never followed: the type of every entry comes from the directory
 //! listing (which reports a symlink or junction as a link, not as what it
 //! points to), and links are unlinked, leaving their targets untouched.
@@ -31,6 +36,9 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+#[cfg(unix)]
+mod unix;
 
 /// How many failures are kept for the final report (all are counted).
 pub const MAX_REPORTED_ERRORS: usize = 10;
@@ -70,6 +78,15 @@ impl Stats {
 /// A real directory is deleted recursively; anything else (file, symlink,
 /// junction) is just unlinked. Failures are recorded in `stats`.
 pub fn delete(root: &Path, file_type: FileType, stats: &Stats) {
+    #[cfg(unix)]
+    unix::delete(root, file_type, stats);
+    #[cfg(not(unix))]
+    delete_by_path(root, file_type, stats);
+}
+
+/// The portable engine: every operation names its entry by full path. Used
+/// on Windows, and on Unix as a fallback when file descriptors run out.
+fn delete_by_path(root: &Path, file_type: FileType, stats: &Stats) {
     // The root's parent is outside the tree, so it is never modified.
     delete_entry(root, file_type, false, stats);
 }

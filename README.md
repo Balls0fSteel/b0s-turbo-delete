@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">Turbo Delete</h1>
-<p align="center">Fast folder deletion for Windows, from the right-click menu or the command line.</p>
+<p align="center">Fast folder deletion for Windows, Linux, macOS and FreeBSD.</p>
 <p align="center">
   <a href="https://github.com/sponsors/Balls0fSteel">
     <img src="https://img.shields.io/badge/Sponsor-Balls0fSteel-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor Balls0fSteel on GitHub" />
@@ -11,9 +11,12 @@
 </p>
 
 Turbo Delete removes large folders (`node_modules`, build output) much faster
-than Explorer by deleting in parallel on all CPU cores.
+than Explorer or `rm -rf` by deleting in parallel on all CPU cores. On Windows
+it also adds a **Turbo Delete** entry to the folder right-click menu.
 
 ## Install
+
+### Windows
 
 Run in PowerShell:
 
@@ -27,6 +30,24 @@ Or download from the [latest release](https://github.com/Balls0fSteel/b0s-turbo-
   adds `td` to your `PATH` and adds **Turbo Delete** to the folder right-click
   menu. Uninstall from *Settings → Apps*.
 - `td.exe` is the standalone tool, with no installation.
+
+### Linux, macOS, FreeBSD
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Balls0fSteel/b0s-turbo-delete/master/dist/install.sh | sh
+```
+
+This installs `td` to `~/.local/bin` (set `TD_INSTALL_DIR` to change it, or
+`TD_VERSION` to pick a version) after verifying its checksum.
+
+Or download `td-<version>-<target>.tar.gz` from the
+[latest release](https://github.com/Balls0fSteel/b0s-turbo-delete/releases/latest)
+(Linux x86_64/aarch64 musl, macOS universal, FreeBSD x86_64), check it against
+`SHA256SUMS`, and put `td` on your `PATH`. Or build with Cargo:
+
+```sh
+cargo install --git https://github.com/Balls0fSteel/b0s-turbo-delete
+```
 
 ## Usage
 
@@ -60,12 +81,22 @@ deleted, and the exit code is 1.
 - Without `--yes`, `td` refuses to run when its input is not a terminal (for
   example in a script) instead of waiting for an answer.
 
+## How it's fast
+
+- Directories are deleted in parallel on all cores (work-stealing), bottom-up.
+- Each directory is listed once; entry types come from the listing, so there
+  are no extra `stat` calls.
+- On Linux, macOS and FreeBSD, everything is done relative to open directory
+  handles (`openat`/`unlinkat`), so the kernel never re-walks the full path:
+  the cost per file does not grow with depth, paths longer than `PATH_MAX`
+  are fine, and a folder swapped for a symlink mid-delete is never followed.
+
 ## Build from source
 
 Needs [Rust](https://rustup.rs) 1.85 or newer.
 
 ```sh
-cargo build --release   # target/release/td.exe
+cargo build --release   # target/release/td (td.exe on Windows)
 cargo test
 ```
 
@@ -77,6 +108,8 @@ python automate-release.py   # bin\td.exe and bin\turbo-delete-setup.exe
 
 To publish a release, run the **Release** workflow on GitHub Actions (or push a
 `v*` tag). The version must match in `Cargo.toml` and `dist/turbo-delete.iss`.
+It builds the Windows installer and `td.exe`, plus Linux, macOS and FreeBSD
+archives and a `SHA256SUMS` file.
 
 ## Support
 
